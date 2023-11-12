@@ -1,10 +1,10 @@
 package client
 
 import (
+	"errors"
 	"log"
 	"math/rand"
 	"os"
-	"runtime"
 	"sync"
 
 	"cli-torrent/internal/torrent/p2p/tracker"
@@ -12,25 +12,25 @@ import (
 )
 
 type TorrentClient interface {
-	DownloadFile(torrentFile string, dst string) *TorrentFileState
+	DownloadFile(torrentFile string, dst string) error
+	GetFileStates() []*TorrentFileState
 }
-
-const maxConcurrentDownloadingFiles = 16
-const maxConcurrentWorkers = 1
 
 var _ TorrentClient = &Client{}
 
 type Client struct {
-	peerId [20]byte
-	port   uint16
-	buf    []byte
+	peerId     [20]byte
+	port       uint16
+	buf        []byte
+	fileStates []*TorrentFileState
 }
 
-func NewClient() TorrentClient {
+func NewClient() *Client {
 	return &Client{
-		peerId: [20]byte(genPeerId()),
-		port:   10434,
-		buf:    make([]byte, 0),
+		peerId:     [20]byte(genPeerId()),
+		port:       10434,
+		buf:        make([]byte, 0),
+		fileStates: make([]*TorrentFileState, 0),
 	}
 }
 
@@ -42,99 +42,96 @@ func genPeerId() []byte {
 	return buf
 }
 
-func (c *Client) DownloadFile(torrentFile string, dst string) *TorrentFileState {
+func (c *Client) DownloadFile(torrentFile, dst string) error {
 	tf, err := torrentfile.New(torrentFile)
-	state := NewState(int64(tf.Info.Length), tf.Info.Name)
 	if err != nil {
-		state.State = Failed
-		state.Err = err
-		return state
+		return err
 	}
+	pieces := (tf.Info.Length + tf.Info.PieceLength - 1) / tf.Info.PieceLength
+	state := NewState(int64(pieces), tf.Info.Name, dst)
+	c.fileStates = append(c.fileStates, state)
+	go c.startDownload(tf, state, dst)
+	return nil
+}
 
-	c.startDownload(tf, state, dst)
-	return state
+func (c *Client) GetFileStates() []*TorrentFileState {
+	return c.fileStates
 }
 
 func (c *Client) startDownload(tf *torrentfile.Torrentfile, state *TorrentFileState, dst string) {
 	cnt := (tf.Info.Length + tf.Info.PieceLength - 1) / tf.Info.PieceLength
 	jobChan := make(chan *Job, cnt)
-	c.fillJobChan(jobChan, tf)
 	resChan := make(chan *Result, cnt)
-	semaphore := make(chan struct{}, maxConcurrentWorkers)
-	//defer close(semaphore)
-	bufer := make([]byte, tf.Info.Length)
-	go c.accumulateRes(resChan, bufer, tf, state, jobChan)
-
+	c.fillJobChan(jobChan, tf)
+	buffer := make([]byte, tf.Info.Length)
 	var wg *sync.WaitGroup = &sync.WaitGroup{}
-	//for state.State == InProgress {
-	//	trackerInfo, err := tracker.NewTracker(tf, c.peerId, c.port)
-	//	//t0 := time.Now()
-	//	if err != nil {
-	//		state.State = Failed
-	//		state.Err = err
-	//		break
-	//	}
-	//
-	//	break
-	//	//break
-	//	//time.Sleep(time.Now().Sub(t0.Add(time.Duration(trackerInfo.Interval))))
-	//}
-	trackerInfo, _ := tracker.NewTracker(tf, c.peerId, c.port)
-	for _, peer := range trackerInfo.Peers {
-		peer := peer
-		if state.State != InProgress {
-			break
-		}
-		//semaphore <- struct{}{}
-		//p2pClient, err := NewP2PClient(peer, c.peerId, tf)
-		//if err != nil {
-		//	<-semaphore
-		//	continue
-		//}
-		wg.Add(1)
-		worker := NewWorker(peer, state, semaphore, c.peerId, tf)
-		go worker.startWorker(jobChan, resChan, wg)
-		//log.Println("worker stopped")
-	}
 
-	wg.Wait()
-	log.Println("download done")
+	go c.accumulateRes(resChan, buffer, tf, state, jobChan)
+	c.downloadFileFromPeers(tf, state, wg, jobChan, resChan)
+	c.saveDownloadedFile(state, dst, buffer)
+}
 
-	if state.State == InProgress {
-		err := c.saveToFile(dst)
+func (c *Client) saveDownloadedFile(state *TorrentFileState, dst string, buffer []byte) {
+	if state.GetState() == Downloaded {
+		err := c.saveToFile(dst, buffer)
 		if err != nil {
-			state.State = Failed
-			state.Err = err
+			log.Println(err)
+			state.UpdateState(Failed)
+			state.UpdateErr(err)
 		}
 	}
 }
 
-func (c *Client) saveToFile(dst string) error {
+func (c *Client) downloadFileFromPeers(tf *torrentfile.Torrentfile, state *TorrentFileState, wg *sync.WaitGroup, jobChan chan *Job, resChan chan *Result) {
+	for state.GetState() == InProgress {
+		trackerInfo, err := tracker.NewTracker(tf, c.peerId, c.port)
+		if err != nil {
+			state.UpdateState(Failed)
+			state.UpdateErr(err)
+			return
+		}
+		for _, peer := range trackerInfo.Peers {
+			if state.GetState() != InProgress {
+				break
+			}
+			wg.Add(1)
+			worker := NewWorker(peer, state, c.peerId, tf)
+			go worker.startWorker(jobChan, resChan, wg)
+		}
+		break
+	}
+	wg.Wait()
+}
+
+var (
+	ErrFailedToOpenDstFile = errors.New("failed to open destination file")
+	ErrFailedToWrite       = errors.New("error while writing to destination file")
+)
+
+func (c *Client) saveToFile(dst string, buffer []byte) error {
 	outFile, err := os.Create(dst)
 	if err != nil {
-		return err
+		return ErrFailedToOpenDstFile
 	}
 	defer outFile.Close()
-	_, err = outFile.Write(c.buf)
+	_, err = outFile.Write(buffer)
 	if err != nil {
-		return err
+		return ErrFailedToWrite
 	}
 	return nil
 }
 
 func (c *Client) accumulateRes(resChan chan *Result, buffer []byte, tf *torrentfile.Torrentfile, state *TorrentFileState, jobChan chan *Job) {
 	donePieces := 0
-	cnt := (tf.Info.Length + tf.Info.PieceLength - 1) / tf.Info.PieceLength
 	for donePieces < len(tf.Info.PieceHashes) {
 		res := <-resChan
-		log.Println("goroutines ", runtime.NumGoroutine())
-		log.Println((float64(donePieces)*100)/float64(cnt), "%, pieces ", donePieces, " downloaded")
 		begin, end := tf.CalculateBoundsForPiece(res.index)
 		copy(buffer[begin:end], res.buf)
-		state.UpdateDownloadedCount(tf.CalculatePieceSize(res.index))
+		state.UpdateDownloadedCount(1)
 		donePieces++
 	}
 	close(jobChan)
+	state.UpdateState(Downloaded)
 }
 
 func (c *Client) fillJobChan(jobChan chan *Job, tf *torrentfile.Torrentfile) {

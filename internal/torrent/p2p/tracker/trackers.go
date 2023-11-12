@@ -2,7 +2,6 @@ package tracker
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -22,15 +21,15 @@ type beeTracker struct {
 }
 
 var (
-	ErrMalformedPeers = errors.New("peers is malformed, size of each peer must be 6 bytes")
+	ErrMalformedPeers        = errors.New("peers is malformed, size of each peer must be 6 bytes")
+	ErrTrackerDoesntResponse = errors.New("tracker doesn't response")
+	ErrTrackerBadResponse    = errors.New("tracker response in incorrect format")
 )
 
 func NewTracker(t *torrentfile.Torrentfile, peerID [20]byte, port uint16) (*Tracker, error) {
-	const op = "torrentfile.tracker.NewTracker"
-
 	bt, err := requestPeers(t, peerID, port)
 	if err != nil {
-		return nil, fmt.Errorf("failed to request peers: %s: %w", op, err)
+		return nil, err
 	}
 
 	const peerSize = 6
@@ -53,8 +52,6 @@ func NewTracker(t *torrentfile.Torrentfile, peerID [20]byte, port uint16) (*Trac
 }
 
 func requestPeers(t *torrentfile.Torrentfile, peerID [20]byte, port uint16) (beeTracker, error) {
-	const op = "p2p.tracker.requestPeers"
-
 	url, err := t.BuildTrackerUrl(peerID, port)
 
 	if err != nil {
@@ -65,14 +62,14 @@ func requestPeers(t *torrentfile.Torrentfile, peerID [20]byte, port uint16) (bee
 	resp, err := client.Get(url)
 	if err != nil {
 		log.Println(err)
-		return beeTracker{}, err
+		return beeTracker{}, ErrTrackerDoesntResponse
 	}
 	defer resp.Body.Close()
 
 	var bt beeTracker
 	err = bencode.Unmarshal(resp.Body, &bt)
 	if err != nil {
-		fmt.Errorf("failed to decode bencoded tracker info %s: %w", op, err)
+		return beeTracker{}, ErrTrackerBadResponse
 	}
 
 	return bt, nil

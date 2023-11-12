@@ -2,7 +2,6 @@ package message
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
 )
 
@@ -34,7 +33,7 @@ func (r *have) Send(conn net.Conn) error {
 func (m *have) Deserialize(payload []byte) error {
 	m.payload = payload
 	if len(m.payload) != 4 {
-		return fmt.Errorf("Expected payload length 4, got length %d", len(m.payload))
+		return ErrBadMessage
 	}
 	index := int(binary.BigEndian.Uint32(m.payload))
 	*(m.index) = index

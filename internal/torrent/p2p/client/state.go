@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 )
 
-type State uint8
+type State int32
 
 var (
 	InProgress State = 0
@@ -12,31 +12,63 @@ var (
 	Failed     State = 2
 )
 
-type TorrentFileState struct {
-	Name       string
-	State      State
-	Length     atomic.Int64
-	Downloaded atomic.Int64
-	Err        error
+func (s State) String() string {
+	switch s {
+	case InProgress:
+		return "downloading"
+	case Downloaded:
+		return "downloaded"
+	case Failed:
+		return "failed to download"
+	default:
+		return "Unknown state"
+	}
 }
 
-func NewState(length int64, name string) *TorrentFileState {
+type TorrentFileState struct {
+	Name       string
+	Dest       string
+	State      atomic.Int32
+	Pieces     int64
+	Downloaded atomic.Int64
+	Err        atomic.Pointer[error]
+}
+
+func NewState(pieces int64, name, dest string) *TorrentFileState {
 	t := &TorrentFileState{
-		State: InProgress,
-		Name:  name,
+		Name:   name,
+		Pieces: pieces,
+		Dest:   dest,
 	}
-	t.Length.Store(length)
 	t.Downloaded.Store(0)
+	t.State.Store(0)
+	t.Err.Store(nil)
 	return t
 }
 
-func (s *TorrentFileState) UpdateDownloadedCount(delta int) {
-	new := s.Downloaded.Add(int64(delta))
-	if s.Length.Load() == new {
-		s.State = Downloaded
+func (s *TorrentFileState) UpdateDownloadedCount(delta int64) {
+	newDownloadedVal := s.Downloaded.Add(delta)
+	if s.Pieces == newDownloadedVal {
+		s.State.Store(int32(Downloaded))
 	}
 }
 
+func (s *TorrentFileState) GetDownloadedCount() int64 {
+	return s.Downloaded.Load()
+}
+
 func (s *TorrentFileState) UpdateState(state State) {
-	s.State = state
+	s.State.Store(int32(state))
+}
+
+func (s *TorrentFileState) GetState() State {
+	return State(s.State.Load())
+}
+
+func (s *TorrentFileState) UpdateErr(err error) {
+	s.Err.Store(&err)
+}
+
+func (s *TorrentFileState) GetErr() error {
+	return *s.Err.Load()
 }

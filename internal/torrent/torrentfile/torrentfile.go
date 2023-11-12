@@ -1,7 +1,6 @@
 package torrentfile
 
 import (
-	"fmt"
 	"net/url"
 	"strconv"
 )
@@ -20,21 +19,19 @@ type Info struct {
 }
 
 func New(path string) (*Torrentfile, error) {
-	const op = "torrentfile.fromFile"
-
 	btf, err := fromFile(path)
 	if err != nil {
-		return &Torrentfile{}, fmt.Errorf("%s: %w", op, err)
+		return &Torrentfile{}, err
 	}
 
 	pieceHashes, err := btf.Info.pieceHashes()
 	if err != nil {
-		return &Torrentfile{}, fmt.Errorf("%s: %w", op, err)
+		return &Torrentfile{}, err
 	}
 
 	infoHash, err := btf.Info.calcInfoHash()
 	if err != nil {
-		return &Torrentfile{}, fmt.Errorf("%s: %w", op, err)
+		return &Torrentfile{}, err
 	}
 	return &Torrentfile{
 		Announce: btf.Announce,
@@ -51,7 +48,7 @@ func New(path string) (*Torrentfile, error) {
 func (t *Torrentfile) BuildTrackerUrl(peerId [20]byte, port uint16) (string, error) {
 	base, err := url.Parse(t.Announce)
 	if err != nil {
-		return "", err
+		return "", ErrBadTorrentFile
 	}
 	params := url.Values{
 		"info_hash":  []string{string(t.Info.InfoHash[:])},

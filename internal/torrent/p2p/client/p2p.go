@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"errors"
-	"log"
 	"net"
 	"time"
 
@@ -23,11 +22,45 @@ type P2PClient struct {
 	backlog    int
 }
 
+var (
+	ErrCantConnectToPeer = errors.New("error while connecting to peer")
+	ErrPeerHasntFile     = errors.New("peers hasn't file with needed info hash")
+)
+
+func NewP2PClient(peer *tracker.Peer, peerId [20]byte, tf *torrentfile.Torrentfile) (*P2PClient, error) {
+	conn, err := net.DialTimeout("tcp", peer.String(), 5*time.Second)
+
+	if err != nil {
+		return &P2PClient{}, ErrCantConnectToPeer
+	}
+
+	err = doHandshake(conn, peerId, tf.Info.InfoHash)
+	if err != nil {
+		conn.Close()
+		return &P2PClient{}, ErrCantConnectToPeer
+	}
+
+	bitfield, err := receiveBitfield(conn)
+
+	if err != nil {
+		conn.Close()
+		return &P2PClient{}, ErrCantConnectToPeer
+	}
+
+	return &P2PClient{
+		conn:     conn,
+		chocked:  true,
+		peer:     peer,
+		Bitfield: bitfield,
+		peerId:   peerId,
+		tf:       tf,
+	}, nil
+}
+
 func (c *P2PClient) readMessage(buf []byte, pieceIndex int) error {
 	msgId, payload, err := message.Read(c.conn)
 
 	if err != nil {
-		//log.Println(err, " read err")
 		return err
 	}
 
@@ -56,38 +89,6 @@ func (c *P2PClient) readMessage(buf []byte, pieceIndex int) error {
 	return nil
 }
 
-func NewP2PClient(peer *tracker.Peer, peerId [20]byte, tf *torrentfile.Torrentfile) (*P2PClient, error) {
-	conn, err := net.DialTimeout("tcp", peer.String(), 5*time.Second)
-
-	if err != nil {
-		return &P2PClient{}, err
-	}
-
-	err = doHandshake(conn, peerId, tf.Info.InfoHash)
-	if err != nil {
-		conn.Close()
-		return &P2PClient{}, err
-	}
-
-	bitfield, err := receiveBitfield(conn)
-
-	if err != nil {
-		conn.Close()
-		return &P2PClient{}, err
-	}
-
-	log.Println("connected to peer ", peer.String())
-
-	return &P2PClient{
-		conn:     conn,
-		chocked:  true,
-		peer:     peer,
-		Bitfield: bitfield,
-		peerId:   peerId,
-		tf:       tf,
-	}, nil
-}
-
 func receiveBitfield(conn net.Conn) (message.Bitfield, error) {
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	defer conn.SetDeadline(time.Time{})
@@ -96,7 +97,7 @@ func receiveBitfield(conn net.Conn) (message.Bitfield, error) {
 		return make(message.Bitfield, 0), err
 	}
 	if msgId != message.MsgBitfield {
-		return make(message.Bitfield, 0), errors.New("expected bitfield")
+		return make(message.Bitfield, 0), message.ErrUnexpectedMessage
 	}
 
 	return payload, nil
@@ -119,7 +120,7 @@ func doHandshake(conn net.Conn, peerId, infoHash [20]byte) error {
 		return err
 	}
 	if !bytes.Equal(resp.InfoHash[:], infoHash[:]) {
-		return errors.New("peers hasn't file with needed info hash")
+		return ErrPeerHasntFile
 	}
 	return nil
 }

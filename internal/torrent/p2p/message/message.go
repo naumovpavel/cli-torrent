@@ -2,7 +2,7 @@ package message
 
 import (
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"io"
 	"net"
 )
@@ -22,17 +22,10 @@ const (
 	KeepAlive        MessageID = 9
 )
 
-var names = map[MessageID]string{
-	MsgChoke:         "Choke",
-	MsgUnchoke:       "Unchoke",
-	MsgInterested:    "Interested",
-	MsgNotInterested: "Not interested",
-	MsgHave:          "Have",
-	MsgBitfield:      "Bitfield",
-	MsgRequest:       "Request",
-	MsgPiece:         "Piece",
-	MsgCancel:        "Cancel",
-}
+var (
+	ErrUnexpectedMessage = errors.New("peer respond with unexpected message")
+	ErrBadMessage        = errors.New("peer respond with incorrect message format")
+)
 
 type Message interface {
 	Serialize() []byte
@@ -40,17 +33,11 @@ type Message interface {
 	Send(conn net.Conn) error
 	Payload() []byte
 	Id() MessageID
-	String() string
-	name() string
 }
 
 type message struct {
 	id      MessageID
 	payload []byte
-}
-
-func NewMessage(id MessageID) Message {
-	return &message{id: id}
 }
 
 func (m *message) Payload() []byte {
@@ -62,9 +49,6 @@ func (m *message) Id() MessageID {
 }
 
 func (m *message) Serialize() []byte {
-	if m == nil {
-		return make([]byte, 4)
-	}
 	length := uint32(len(m.payload) + 1)
 	buf := make([]byte, 4+length)
 	binary.BigEndian.PutUint32(buf[0:4], length)
@@ -82,16 +66,16 @@ func Read(r io.Reader) (MessageID, []byte, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := io.ReadFull(r, lengthBuf)
 	if err != nil {
-		return -1, make([]byte, 0), err
+		return -1, make([]byte, 0), ErrBadMessage
 	}
 	length := binary.BigEndian.Uint32(lengthBuf)
 	if length == 0 {
-		return KeepAlive, make([]byte, 0), nil
+		return KeepAlive, make([]byte, 0), ErrBadMessage
 	}
 	messageBuf := make([]byte, length)
 	_, err = io.ReadFull(r, messageBuf)
 	if err != nil {
-		return -1, make([]byte, 0), err
+		return -1, make([]byte, 0), ErrBadMessage
 	}
 
 	return MessageID(messageBuf[0]), messageBuf[1:], nil
@@ -100,24 +84,4 @@ func Read(r io.Reader) (MessageID, []byte, error) {
 func (m *message) Send(conn net.Conn) error {
 	_, err := conn.Write(m.Serialize())
 	return err
-}
-
-func (m *message) name() string {
-	if m == nil {
-		return "KeepAlive"
-	}
-
-	name, ok := names[m.id]
-	if !ok {
-		return "Unknown"
-	} else {
-		return name
-	}
-}
-
-func (m *message) String() string {
-	if m == nil {
-		return m.name()
-	}
-	return fmt.Sprintf("%s [%d]", m.name(), len(m.payload))
 }

@@ -11,5 +11,8 @@ func (b Bitfield) HasPiece(i int) bool {
 }
 
 func (b Bitfield) SetPiece(i int) {
+	if i < 0 || i/8 >= len(b) {
+		return
+	}
 	b[i/8] |= (1 << (7 - i%8))
 }

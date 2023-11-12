@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/jackpal/bencode-go"
@@ -24,19 +23,23 @@ type beeInfo struct {
 
 var (
 	ErrMalformedPieces = errors.New("pieces is malformed, size of each piece must be 20 bytes")
+	ErrFailedOpenFile  = errors.New("can't open torrent file")
+	ErrBadTorrentFile  = errors.New("incorrect torrent file format")
 )
 
 func fromFile(path string) (beeTorrentfile, error) {
-	const op = "torrentfile.fromFile"
-
 	file, err := os.Open(path)
 	defer file.Close()
 	if err != nil {
-		return beeTorrentfile{}, fmt.Errorf("%s: %w", op, err)
+		return beeTorrentfile{}, ErrFailedOpenFile
 	}
 
 	btf := beeTorrentfile{}
 	err = bencode.Unmarshal(file, &btf)
+
+	if err != nil {
+		return beeTorrentfile{}, ErrBadTorrentFile
+	}
 
 	return btf, nil
 }
@@ -61,7 +64,7 @@ func (i *beeInfo) calcInfoHash() ([20]byte, error) {
 	var buf bytes.Buffer
 	err := bencode.Marshal(&buf, *i)
 	if err != nil {
-		return [20]byte{}, err
+		return [20]byte{}, ErrBadTorrentFile
 	}
 	return sha1.Sum(buf.Bytes()), nil
 }

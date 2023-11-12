@@ -6,6 +6,6 @@ type notInterested struct {
 
 func NewNotInterested() Message {
 	return &notInterested{message{
-		id: MsgInterested,
+		id: MsgNotInterested,
 	}}
 }

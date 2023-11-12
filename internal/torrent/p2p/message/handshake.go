@@ -1,7 +1,6 @@
 package message
 
 import (
-	"errors"
 	"io"
 )
 
@@ -39,8 +38,7 @@ func DeserializeHandshake(r io.Reader) (*Handshake, error) {
 	}
 
 	if int(buf[0]) != 19 {
-		err := errors.New("pstrlen must be equal 19")
-		return nil, err
+		return nil, ErrBadMessage
 	}
 
 	var infoHash, peerID [20]byte

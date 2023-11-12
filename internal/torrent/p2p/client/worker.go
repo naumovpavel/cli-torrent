@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"crypto/sha1"
-	"fmt"
 	"sync"
 	"time"
 
@@ -32,16 +31,14 @@ type Worker struct {
 	p2pClient *P2PClient
 	state     *TorrentFileState
 	peerID    [20]byte
-	semaphore chan struct{}
 }
 
-func NewWorker(peer *tracker.Peer, state *TorrentFileState, semaphore chan struct{}, peerID [20]byte, tf *torrentfile.Torrentfile) *Worker {
+func NewWorker(peer *tracker.Peer, state *TorrentFileState, peerID [20]byte, tf *torrentfile.Torrentfile) *Worker {
 	return &Worker{
-		peer:      peer,
-		state:     state,
-		semaphore: semaphore,
-		peerID:    peerID,
-		tf:        tf,
+		peer:   peer,
+		state:  state,
+		peerID: peerID,
+		tf:     tf,
 	}
 }
 
@@ -63,6 +60,10 @@ func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, wg *sync.W
 		return
 	}
 
+	w.downloadPieces(jobChan, resChan)
+}
+
+func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result) {
 	for job := range jobChan {
 		if !w.p2pClient.Bitfield.HasPiece(job.index) {
 			jobChan <- job
@@ -72,7 +73,6 @@ func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, wg *sync.W
 		buf, err := w.downloadPiece(job)
 		if err != nil {
 			jobChan <- job
-			//log.Fatal("hui")
 			return
 		}
 
@@ -87,55 +87,67 @@ func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, wg *sync.W
 			index: job.index,
 			buf:   buf,
 		}
-		//log.Println("go to the next piece")
 	}
 }
 
 func (w *Worker) downloadPiece(job *Job) ([]byte, error) {
-	//log.Println("downloading piece ", job.index)
 	w.p2pClient.downloaded = 0
 	w.p2pClient.backlog = 0
-	requested := 0
 	buf := make([]byte, job.length)
 
 	w.p2pClient.conn.SetDeadline(time.Now().Add(30 * time.Second))
 	defer w.p2pClient.conn.SetDeadline(time.Time{})
 
+	err := w.tryToDownloadPiece(job, buf)
+	if err != nil {
+		return buf, err
+	}
+
+	return buf, nil
+}
+
+func (w *Worker) tryToDownloadPiece(job *Job, buf []byte) error {
+	requested := 0
+
 	for w.p2pClient.downloaded < job.length {
-		//log.Println(w.p2pClient.downloaded, " ", w.p2pClient.backlog)
 		if !w.p2pClient.chocked {
-			for w.p2pClient.backlog < maxBacklog && requested < job.length {
-				blockSize := maxBlockSize
-
-				if job.length-requested < maxBlockSize {
-					blockSize = job.length - requested
-				}
-
-				//log.Println("req")
-				err := message.NewRequest(job.index, requested, blockSize).Send(w.p2pClient.conn)
-				if err != nil {
-					return nil, err
-				}
-
-				requested += blockSize
-				w.p2pClient.backlog++
+			err := w.sendRequests(job, &requested)
+			if err != nil {
+				return err
 			}
 		}
 
 		err := w.p2pClient.readMessage(buf, job.index)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
 
-	//log.Println("done wtih piece ", job.index)
-	return buf, nil
+func (w *Worker) sendRequests(job *Job, requested *int) error {
+	for w.p2pClient.backlog < maxBacklog && *requested < job.length {
+		blockSize := maxBlockSize
+
+		if job.length-*requested < maxBlockSize {
+			blockSize = job.length - *requested
+		}
+
+		err := message.NewRequest(job.index, *requested, blockSize).Send(w.p2pClient.conn)
+		if err != nil {
+			return err
+		}
+
+		*requested += blockSize
+		w.p2pClient.backlog++
+	}
+	return nil
 }
 
 func checkIntegrity(buf []byte, hash []byte, index int) error {
 	bufHash := sha1.Sum(buf)
 	if !bytes.Equal(bufHash[:], hash[:]) {
-		return fmt.Errorf("Index %d failed integrity check", index)
+		return message.ErrBadMessage
 	}
 	return nil
 }
