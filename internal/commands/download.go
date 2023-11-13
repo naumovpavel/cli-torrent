@@ -27,5 +27,5 @@ func (d *DownloadCommand) Execute(args ...string) string {
 	if err != nil {
 		return err.Error()
 	}
-	return "file successfully start downloading"
+	return "file download started successfully"
 }

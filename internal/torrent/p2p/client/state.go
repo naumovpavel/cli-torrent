@@ -23,6 +23,10 @@ func (s State) String() string {
 		return "downloaded"
 	case Failed:
 		return "failed to download"
+	case Paused:
+		return "paused"
+	case Stopped:
+		return "stopped"
 	default:
 		return "Unknown state"
 	}

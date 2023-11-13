@@ -85,18 +85,3 @@ func (s *ShowCommand) refreshTable(columns []string, table *tview.Table) {
 
 	}
 }
-
-//func (d *ShowCommand) Execute(args ...string) string {
-//	if len(args) > 1 {
-//		return "too many arguments for command, use help to see download arguments"
-//	}
-//	ans := strings.Builder{}
-//	for i, state := range d.client.GetFileStates() {
-//		downProcent := float64(state.GetDownloadedCount()) * 100 / float64(state.Pieces)
-//		ans.WriteString(fmt.Sprintf("%d: %s %s %s %f%% %f\n", i, state.Name, state.Dest, state.GetState().String(), downProcent, state.GetSpeed()))
-//	}
-//	if len(d.client.GetFileStates()) == 0 {
-//		return "you have not download any files yet"
-//	}
-//	return ans.String()
-//}
