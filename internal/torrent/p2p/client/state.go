@@ -11,6 +11,8 @@ var (
 	InProgress State = 0
 	Downloaded State = 1
 	Failed     State = 2
+	Stopped    State = 3
+	Paused     State = 4
 )
 
 func (s State) String() string {
@@ -64,6 +66,9 @@ func (s *TorrentFileState) GetDownloadedCount() int64 {
 
 func (s *TorrentFileState) UpdateState(state State) {
 	s.State.Store(int32(state))
+	if state == Paused || state == Stopped {
+		s.UpdateSpeed(0)
+	}
 }
 
 func (s *TorrentFileState) GetState() State {

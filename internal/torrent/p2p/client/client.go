@@ -7,14 +7,15 @@ import (
 	"os"
 	"time"
 
-	"cli-torrent/internal/torrent/p2p/tracker"
-	"cli-torrent/internal/torrent/torrentfile"
 	"github.com/gammazero/deque"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/tracker"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/torrentfile"
 )
 
 type TorrentClient interface {
 	DownloadFile(torrentFile string, dst string) error
 	GetFileStates() []*TorrentFileState
+	StopAll()
 }
 
 var _ TorrentClient = &Client{}
@@ -59,6 +60,12 @@ func (c *Client) GetFileStates() []*TorrentFileState {
 	return c.fileStates
 }
 
+func (c *Client) StopAll() {
+	for _, state := range c.GetFileStates() {
+		state.UpdateState(Stopped)
+	}
+}
+
 func (c *Client) startDownload(tf *torrentfile.Torrentfile, state *TorrentFileState, dst string) {
 	cnt := (tf.Info.Length + tf.Info.PieceLength - 1) / tf.Info.PieceLength
 	jobChan := make(chan *Job, cnt)
@@ -87,7 +94,6 @@ func (c *Client) saveDownloadedFile(state *TorrentFileState, dst string, buffer 
 func (c *Client) downloadFileFromPeers(tf *torrentfile.Torrentfile, state *TorrentFileState, jobChan chan *Job, resChan chan *Result, downloadHistory chan DownloadHistoryEntry) {
 	for state.GetState() == InProgress {
 		trackerInfo, err := tracker.NewTracker(tf, c.peerId, c.port)
-		log.Println(len(trackerInfo.Peers))
 		if err != nil {
 			state.UpdateState(Failed)
 			state.UpdateErr(err)

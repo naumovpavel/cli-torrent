@@ -5,9 +5,9 @@ import (
 	"crypto/sha1"
 	"time"
 
-	"cli-torrent/internal/torrent/p2p/message"
-	"cli-torrent/internal/torrent/p2p/tracker"
-	"cli-torrent/internal/torrent/torrentfile"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/message"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/tracker"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/torrentfile"
 )
 
 type Job struct {
@@ -64,11 +64,20 @@ func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, state *Tor
 		return
 	}
 
-	w.downloadPieces(jobChan, resChan, downloadHistory)
+	w.downloadPieces(jobChan, resChan, downloadHistory, state)
 }
 
-func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result, downloadHistory chan DownloadHistoryEntry) {
+func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result, downloadHistory chan DownloadHistoryEntry, state *TorrentFileState) {
 	for job := range jobChan {
+		if state.GetState() != InProgress {
+			jobChan <- job
+			if state.GetState() == Paused {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			} else {
+				return
+			}
+		}
 		if !w.p2pClient.Bitfield.HasPiece(job.index) {
 			jobChan <- job
 			continue

@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
-	"cli-torrent/internal/torrent/p2p/message"
-	"cli-torrent/internal/torrent/p2p/tracker"
-	"cli-torrent/internal/torrent/torrentfile"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/message"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/tracker"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/torrentfile"
 )
 
 type P2PClient struct {

@@ -1,18 +1,17 @@
 package main
 
 import (
-	"net/http"
-	"os"
-
 	_ "net/http/pprof"
 
-	"cli-torrent/internal/torrent/p2p/client"
+	"github.com/naumovpavel/cli-torrent/internal/commands"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/p2p/client"
 )
 
+const greeting = "Hello! It's cli bit-torrent client, use help to see command list"
+
 func main() {
-	inPath := os.Args[1]
-	outPath := os.Args[2]
-	go http.ListenAndServe("0.0.0.0:8085", nil)
 	client := client.NewClient()
-	client.DownloadFile(inPath, outPath)
+	cm := commands.NewCommandManager(client)
+	println(greeting)
+	cm.Run()
 }

@@ -2,12 +2,11 @@ package tracker
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
-	"cli-torrent/internal/torrent/torrentfile"
 	"github.com/jackpal/bencode-go"
+	"github.com/naumovpavel/cli-torrent/internal/torrent/torrentfile"
 )
 
 type Tracker struct {
@@ -61,7 +60,6 @@ func requestPeers(t *torrentfile.Torrentfile, peerID [20]byte, port uint16) (bee
 	client := http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Println(err)
 		return beeTracker{}, ErrTrackerDoesntResponse
 	}
 	defer resp.Body.Close()
