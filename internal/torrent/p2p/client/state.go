@@ -1,6 +1,7 @@
 package client
 
 import (
+	"sync"
 	"sync/atomic"
 )
 
@@ -26,12 +27,14 @@ func (s State) String() string {
 }
 
 type TorrentFileState struct {
-	Name       string
-	Dest       string
-	State      atomic.Int32
-	Pieces     int64
-	Downloaded atomic.Int64
-	Err        atomic.Pointer[error]
+	Name         string
+	Dest         string
+	State        atomic.Int32
+	Pieces       int64
+	Downloaded   atomic.Int64
+	Err          atomic.Pointer[error]
+	WorkingPeers sync.Map
+	Speed        atomic.Pointer[float64]
 }
 
 func NewState(pieces int64, name, dest string) *TorrentFileState {
@@ -40,8 +43,10 @@ func NewState(pieces int64, name, dest string) *TorrentFileState {
 		Pieces: pieces,
 		Dest:   dest,
 	}
+	var speed float64 = 0
 	t.Downloaded.Store(0)
 	t.State.Store(0)
+	t.Speed.Store(&speed)
 	t.Err.Store(nil)
 	return t
 }
@@ -63,6 +68,14 @@ func (s *TorrentFileState) UpdateState(state State) {
 
 func (s *TorrentFileState) GetState() State {
 	return State(s.State.Load())
+}
+
+func (s *TorrentFileState) UpdateSpeed(speed float64) {
+	s.Speed.Store(&speed)
+}
+
+func (s *TorrentFileState) GetSpeed() float64 {
+	return *s.Speed.Load()
 }
 
 func (s *TorrentFileState) UpdateErr(err error) {

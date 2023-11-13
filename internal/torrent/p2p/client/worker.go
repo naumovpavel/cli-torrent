@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"crypto/sha1"
-	"sync"
 	"time"
 
 	"cli-torrent/internal/torrent/p2p/message"
@@ -20,6 +19,11 @@ type Job struct {
 type Result struct {
 	index int
 	buf   []byte
+}
+
+type DownloadHistoryEntry struct {
+	size int
+	time time.Time
 }
 
 const maxBacklog = 5
@@ -42,8 +46,8 @@ func NewWorker(peer *tracker.Peer, state *TorrentFileState, peerID [20]byte, tf 
 	}
 }
 
-func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, state *TorrentFileState, downloadHistory chan DownloadHistoryEntry) {
+	defer state.WorkingPeers.Delete(w.peer.String())
 	p2pClient, err := NewP2PClient(w.peer, w.peerID, w.tf)
 	if err != nil {
 		return
@@ -60,17 +64,17 @@ func (w *Worker) startWorker(jobChan chan *Job, resChan chan *Result, wg *sync.W
 		return
 	}
 
-	w.downloadPieces(jobChan, resChan)
+	w.downloadPieces(jobChan, resChan, downloadHistory)
 }
 
-func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result) {
+func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result, downloadHistory chan DownloadHistoryEntry) {
 	for job := range jobChan {
 		if !w.p2pClient.Bitfield.HasPiece(job.index) {
 			jobChan <- job
 			continue
 		}
 
-		buf, err := w.downloadPiece(job)
+		buf, err := w.downloadPiece(job, downloadHistory)
 		if err != nil {
 			jobChan <- job
 			return
@@ -90,7 +94,7 @@ func (w *Worker) downloadPieces(jobChan chan *Job, resChan chan *Result) {
 	}
 }
 
-func (w *Worker) downloadPiece(job *Job) ([]byte, error) {
+func (w *Worker) downloadPiece(job *Job, downloadHistory chan DownloadHistoryEntry) ([]byte, error) {
 	w.p2pClient.downloaded = 0
 	w.p2pClient.backlog = 0
 	buf := make([]byte, job.length)
@@ -98,7 +102,7 @@ func (w *Worker) downloadPiece(job *Job) ([]byte, error) {
 	w.p2pClient.conn.SetDeadline(time.Now().Add(30 * time.Second))
 	defer w.p2pClient.conn.SetDeadline(time.Time{})
 
-	err := w.tryToDownloadPiece(job, buf)
+	err := w.tryToDownloadPiece(job, buf, downloadHistory)
 	if err != nil {
 		return buf, err
 	}
@@ -106,9 +110,8 @@ func (w *Worker) downloadPiece(job *Job) ([]byte, error) {
 	return buf, nil
 }
 
-func (w *Worker) tryToDownloadPiece(job *Job, buf []byte) error {
+func (w *Worker) tryToDownloadPiece(job *Job, buf []byte, downloadHistory chan DownloadHistoryEntry) error {
 	requested := 0
-
 	for w.p2pClient.downloaded < job.length {
 		if !w.p2pClient.chocked {
 			err := w.sendRequests(job, &requested)
@@ -117,9 +120,17 @@ func (w *Worker) tryToDownloadPiece(job *Job, buf []byte) error {
 			}
 		}
 
+		downloadedOld := w.p2pClient.downloaded
 		err := w.p2pClient.readMessage(buf, job.index)
 		if err != nil {
 			return err
+		}
+
+		if w.p2pClient.downloaded > downloadedOld {
+			downloadHistory <- DownloadHistoryEntry{
+				size: w.p2pClient.downloaded - downloadedOld,
+				time: time.Now(),
+			}
 		}
 	}
 	return nil

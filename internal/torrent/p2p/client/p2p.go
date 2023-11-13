@@ -84,6 +84,7 @@ func (c *P2PClient) readMessage(buf []byte, pieceIndex int) error {
 		}
 		c.downloaded += pieceMsg.Length()
 		c.backlog--
+
 	}
 
 	return nil

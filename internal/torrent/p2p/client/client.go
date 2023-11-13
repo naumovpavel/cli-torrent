@@ -5,10 +5,11 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"sync"
+	"time"
 
 	"cli-torrent/internal/torrent/p2p/tracker"
 	"cli-torrent/internal/torrent/torrentfile"
+	"github.com/gammazero/deque"
 )
 
 type TorrentClient interface {
@@ -62,12 +63,13 @@ func (c *Client) startDownload(tf *torrentfile.Torrentfile, state *TorrentFileSt
 	cnt := (tf.Info.Length + tf.Info.PieceLength - 1) / tf.Info.PieceLength
 	jobChan := make(chan *Job, cnt)
 	resChan := make(chan *Result, cnt)
+	downloadHistory := make(chan DownloadHistoryEntry, cnt*(tf.Info.PieceLength+maxBlockSize-1)/maxBlockSize)
 	c.fillJobChan(jobChan, tf)
 	buffer := make([]byte, tf.Info.Length)
-	var wg *sync.WaitGroup = &sync.WaitGroup{}
 
-	go c.accumulateRes(resChan, buffer, tf, state, jobChan)
-	c.downloadFileFromPeers(tf, state, wg, jobChan, resChan)
+	go c.accumulateRes(resChan, buffer, tf, state, jobChan, downloadHistory)
+	go c.processSpeedChanging(downloadHistory, state)
+	c.downloadFileFromPeers(tf, state, jobChan, resChan, downloadHistory)
 	c.saveDownloadedFile(state, dst, buffer)
 }
 
@@ -82,25 +84,27 @@ func (c *Client) saveDownloadedFile(state *TorrentFileState, dst string, buffer 
 	}
 }
 
-func (c *Client) downloadFileFromPeers(tf *torrentfile.Torrentfile, state *TorrentFileState, wg *sync.WaitGroup, jobChan chan *Job, resChan chan *Result) {
+func (c *Client) downloadFileFromPeers(tf *torrentfile.Torrentfile, state *TorrentFileState, jobChan chan *Job, resChan chan *Result, downloadHistory chan DownloadHistoryEntry) {
 	for state.GetState() == InProgress {
 		trackerInfo, err := tracker.NewTracker(tf, c.peerId, c.port)
+		log.Println(len(trackerInfo.Peers))
 		if err != nil {
 			state.UpdateState(Failed)
 			state.UpdateErr(err)
 			return
 		}
 		for _, peer := range trackerInfo.Peers {
+			if _, ok := state.WorkingPeers.Load(peer.String()); ok {
+				continue
+			}
 			if state.GetState() != InProgress {
 				break
 			}
-			wg.Add(1)
 			worker := NewWorker(peer, state, c.peerId, tf)
-			go worker.startWorker(jobChan, resChan, wg)
+			go worker.startWorker(jobChan, resChan, state, downloadHistory)
 		}
-		break
+		time.Sleep(time.Duration(trackerInfo.Interval) * time.Second)
 	}
-	wg.Wait()
 }
 
 var (
@@ -121,7 +125,7 @@ func (c *Client) saveToFile(dst string, buffer []byte) error {
 	return nil
 }
 
-func (c *Client) accumulateRes(resChan chan *Result, buffer []byte, tf *torrentfile.Torrentfile, state *TorrentFileState, jobChan chan *Job) {
+func (c *Client) accumulateRes(resChan chan *Result, buffer []byte, tf *torrentfile.Torrentfile, state *TorrentFileState, jobChan chan *Job, downloadHistory chan DownloadHistoryEntry) {
 	donePieces := 0
 	for donePieces < len(tf.Info.PieceHashes) {
 		res := <-resChan
@@ -131,6 +135,7 @@ func (c *Client) accumulateRes(resChan chan *Result, buffer []byte, tf *torrentf
 		donePieces++
 	}
 	close(jobChan)
+	close(downloadHistory)
 	state.UpdateState(Downloaded)
 }
 
@@ -138,5 +143,22 @@ func (c *Client) fillJobChan(jobChan chan *Job, tf *torrentfile.Torrentfile) {
 	for index, hash := range tf.Info.PieceHashes {
 		length := tf.CalculatePieceSize(index)
 		jobChan <- &Job{index, hash, length}
+	}
+}
+
+func (c *Client) processSpeedChanging(downloadHistory chan DownloadHistoryEntry, state *TorrentFileState) {
+	history := deque.New[DownloadHistoryEntry]()
+	var sumOfBytes = 0
+	for entry := range downloadHistory {
+		secondAgo := time.Now().Add(-1 * time.Second)
+		for history.Len() > 0 && history.Back().time.Before(secondAgo) {
+			elem := history.PopBack()
+			sumOfBytes -= elem.size
+		}
+		if entry.time.After(secondAgo) {
+			sumOfBytes += entry.size
+			history.PushFront(entry)
+		}
+		state.UpdateSpeed(float64(sumOfBytes) / float64(1024*1024))
 	}
 }
